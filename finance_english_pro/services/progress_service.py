@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+from datetime import date, timedelta
+from uuid import uuid4
+
+import streamlit as st
+
+from db import get_connection, rows_to_dicts
+
+
+def get_local_user_id() -> int:
+    if "device_id" not in st.session_state:
+        st.session_state.device_id = str(uuid4())
+    device_id = st.session_state.device_id
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO local_users (device_id)
+        VALUES (?)
+        ON CONFLICT(device_id) DO UPDATE SET last_active_at = CURRENT_TIMESTAMP
+        """,
+        (device_id,),
+    )
+    user_id = conn.execute(
+        "SELECT local_user_id FROM local_users WHERE device_id = ?", (device_id,)
+    ).fetchone()[0]
+    conn.commit()
+    conn.close()
+    return user_id
+
+
+def get_progress(local_user_id: int, term_id: int) -> dict:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM user_progress WHERE local_user_id = ? AND term_id = ?",
+        (local_user_id, term_id),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else {"status": "new", "is_favorite": 0}
+
+
+def upsert_progress(local_user_id: int, term_id: int, status: str | None = None, is_favorite: bool | None = None) -> None:
+    conn = get_connection()
+    current = conn.execute(
+        "SELECT * FROM user_progress WHERE local_user_id = ? AND term_id = ?",
+        (local_user_id, term_id),
+    ).fetchone()
+    current_status = status or (current["status"] if current else "new")
+    current_favorite = int(is_favorite) if is_favorite is not None else int(current["is_favorite"]) if current else 0
+    today = date.today()
+    if current_status == "unfamiliar":
+        next_review = today + timedelta(days=1)
+    elif current_status == "learning":
+        next_review = today + timedelta(days=3)
+    elif current_status == "mastered":
+        next_review = today + timedelta(days=14)
+    else:
+        next_review = today + timedelta(days=7)
+    conn.execute(
+        """
+        INSERT INTO user_progress (
+            local_user_id, term_id, status, is_favorite, last_review_date, next_review_date, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(local_user_id, term_id) DO UPDATE SET
+            status = excluded.status,
+            is_favorite = excluded.is_favorite,
+            last_review_date = excluded.last_review_date,
+            next_review_date = excluded.next_review_date,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (local_user_id, term_id, current_status, current_favorite, today.isoformat(), next_review.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def record_attempt(local_user_id: int, term_id: int, question_type: str, selected: str, correct: str, is_correct: bool) -> None:
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO attempt_logs
+        (local_user_id, term_id, question_type, selected_answer, correct_answer, is_correct)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (local_user_id, term_id, question_type, selected, correct, int(is_correct)),
+    )
+    counter = "correct_count" if is_correct else "wrong_count"
+    conn.execute(
+        f"""
+        INSERT INTO user_progress (local_user_id, term_id, status, last_review_date, next_review_date, {counter})
+        VALUES (?, ?, ?, DATE('now'), DATE('now', '+3 days'), 1)
+        ON CONFLICT(local_user_id, term_id) DO UPDATE SET
+            {counter} = {counter} + 1,
+            status = CASE WHEN ? THEN 'learning' ELSE 'unfamiliar' END,
+            last_review_date = DATE('now'),
+            next_review_date = CASE WHEN ? THEN DATE('now', '+7 days') ELSE DATE('now', '+1 day') END,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (local_user_id, term_id, "learning" if is_correct else "unfamiliar", int(is_correct), int(is_correct)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_due_reviews(local_user_id: int, mode: str = "due") -> list[dict]:
+    conn = get_connection()
+    if mode == "favorites":
+        where = "p.is_favorite = 1"
+    elif mode == "unfamiliar":
+        where = "p.status = 'unfamiliar'"
+    else:
+        where = "(p.next_review_date IS NULL OR p.next_review_date <= DATE('now') OR p.status = 'unfamiliar')"
+    rows = conn.execute(
+        f"""
+        SELECT
+            t.*, e.example_sentence, e.translation,
+            p.status, p.is_favorite, p.next_review_date, p.correct_count, p.wrong_count
+        FROM user_progress p
+        JOIN terms t ON t.term_id = p.term_id
+        LEFT JOIN examples e ON e.term_id = t.term_id
+        WHERE p.local_user_id = ? AND {where}
+        ORDER BY p.next_review_date IS NULL DESC, p.next_review_date, t.term_or_phrase
+        """,
+        (local_user_id,),
+    ).fetchall()
+    conn.close()
+    return rows_to_dicts(rows)
