@@ -8,10 +8,11 @@ import streamlit as st
 from db import get_connection, rows_to_dicts
 
 
-def get_local_user_id() -> int:
-    if "device_id" not in st.session_state:
-        st.session_state.device_id = str(uuid4())
-    device_id = st.session_state.device_id
+def get_local_user_id(device_id: str | None = None) -> int:
+    if not device_id:
+        if "device_id" not in st.session_state:
+            st.session_state.device_id = str(uuid4())
+        device_id = st.session_state.device_id
     conn = get_connection()
     conn.execute(
         """

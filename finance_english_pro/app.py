@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
@@ -29,9 +30,49 @@ from services.progress_service import get_due_reviews, get_local_user_id, get_pr
 from services.report_service import get_report
 
 
+DEVICE_QUERY_PARAM = "fep_device_id"
+
+
+def get_query_param(name: str) -> str:
+    value = st.query_params.get(name, "")
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    return str(value)
+
+
+def ensure_device_id() -> str:
+    device_id = get_query_param(DEVICE_QUERY_PARAM).strip()
+    if device_id:
+        return device_id
+
+    components.html(
+        f"""
+        <script>
+        const storageKey = "finance_english_pro_device_id";
+        const params = new URLSearchParams(window.parent.location.search);
+        let deviceId = window.parent.localStorage.getItem(storageKey);
+        if (!deviceId) {{
+            if (window.parent.crypto && window.parent.crypto.randomUUID) {{
+                deviceId = window.parent.crypto.randomUUID();
+            }} else {{
+                deviceId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+            }}
+            window.parent.localStorage.setItem(storageKey, deviceId);
+        }}
+        params.set("{DEVICE_QUERY_PARAM}", deviceId);
+        const newUrl = window.parent.location.pathname + "?" + params.toString() + window.parent.location.hash;
+        window.parent.location.replace(newUrl);
+        </script>
+        """,
+        height=0,
+    )
+    st.info("正在初始化本机学习记录，请稍候刷新。")
+    st.stop()
+
+
 st.set_page_config(page_title="Finance English Pro", page_icon="FEP", layout="wide")
 ensure_database()
-USER_ID = get_local_user_id()
+USER_ID = get_local_user_id(ensure_device_id())
 
 
 LIBRARY_SOURCE_MARKERS = ("term library", "术语库", ".xlsx", "rag_terms")
