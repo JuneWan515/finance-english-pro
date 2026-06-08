@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import os
 import sys
 from pathlib import Path
 
@@ -89,6 +91,36 @@ def clear_learning_state() -> None:
         st.session_state.pop(key, None)
 
 
+def admin_password() -> str:
+    try:
+        configured = st.secrets.get("ADMIN_PASSWORD", "")
+    except Exception:
+        configured = ""
+    return str(configured or os.environ.get("FINANCE_ENGLISH_PRO_ADMIN_PASSWORD", ""))
+
+
+def require_admin() -> bool:
+    if st.session_state.get("admin_authenticated"):
+        return True
+
+    st.subheader("管理员登录")
+    configured_password = admin_password()
+    if not configured_password:
+        st.warning("后台更新未启用。请在 Streamlit Secrets 中配置 ADMIN_PASSWORD。")
+        return False
+
+    with st.form("admin_login"):
+        password = st.text_input("管理员密码", type="password")
+        submitted = st.form_submit_button("登录")
+    if submitted:
+        if hmac.compare_digest(password, configured_password):
+            st.session_state.admin_authenticated = True
+            st.rerun()
+        else:
+            st.error("密码不正确。")
+    return False
+
+
 def header() -> None:
     st.markdown(
         """
@@ -115,10 +147,8 @@ def header() -> None:
     )
     page = st.session_state.get("page", "home")
     if page != "home":
-        cols = st.columns([1, 5])
-        with cols[0]:
-            if st.button("返回首页", width="stretch"):
-                go("home")
+        if st.button("返回首页"):
+            go("home")
         return
 
     cols = st.columns([3, 1, 1, 1, 1, 1])
@@ -542,6 +572,9 @@ def report_page() -> None:
 
 
 def admin_page() -> None:
+    if not require_admin():
+        return
+
     st.subheader("内容质检")
     if st.session_state.get("import_result"):
         result = st.session_state.pop("import_result")
@@ -614,6 +647,13 @@ elif page == "admin":
 
 with st.sidebar:
     st.write("内部工具")
-    if st.button("内容质检"):
-        go("admin")
+    if st.session_state.get("admin_authenticated"):
+        if st.button("内容质检"):
+            go("admin")
+        if st.button("退出后台"):
+            st.session_state.admin_authenticated = False
+            go("home")
+    else:
+        if st.button("管理员登录"):
+            go("admin")
     st.caption("V1.3 MVP：本地单设备统计，不做登录和多端同步。")

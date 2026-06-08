@@ -43,6 +43,12 @@ requirements.txt
 
 根目录 `requirements.txt` 会引用 `finance_english_pro/requirements.txt`。部署环境首次运行时如果没有 SQLite 数据库，会从仓库内的 `finance_english_pro/data/seed_terms.csv` 初始化，不需要本地 `整理文件/` 目录。
 
+后台内容质检页默认需要管理员密码。Streamlit Cloud 中在 App settings -> Secrets 配置：
+
+```toml
+ADMIN_PASSWORD = "your-strong-password"
+```
+
 ## CSV 上传字段
 
 上传 CSV 至少需要包含以下字段：
