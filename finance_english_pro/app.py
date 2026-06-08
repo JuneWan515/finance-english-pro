@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 from scripts.init_db import upsert_terms
 from services.admin_service import find_missing_sources, get_quality_summary, update_review_status
@@ -60,6 +65,12 @@ REQUIRED_UPLOAD_COLUMNS = {
     "term_frequency_level",
     "business_scenario",
 }
+QUESTION_TYPE_TARGETS = {
+    "word_assembly": 0.40,
+    "cn_to_en": 0.40,
+    "en_to_cn": 0.20,
+}
+QUESTION_TYPE_ORDER = ("word_assembly", "cn_to_en", "en_to_cn")
 
 
 def go(page: str, **params) -> None:
@@ -74,7 +85,7 @@ def init_nav() -> None:
 
 
 def clear_learning_state() -> None:
-    for key in ("question", "question_history", "answer_result"):
+    for key in ("question", "question_history", "answer_result", "word_answer_ids", "word_question_key", "question_type_counts"):
         st.session_state.pop(key, None)
 
 
@@ -106,7 +117,7 @@ def header() -> None:
     if page != "home":
         cols = st.columns([1, 5])
         with cols[0]:
-            if st.button("返回首页", use_container_width=True):
+            if st.button("返回首页", width="stretch"):
                 go("home")
         return
 
@@ -116,7 +127,7 @@ def header() -> None:
     nav = [("首页", "home"), ("搜索", "search"), ("学习", "learn"), ("复习", "review"), ("报告", "report")]
     for col, (label, page) in zip(cols[1:], nav):
         with col:
-            if st.button(label, use_container_width=True):
+            if st.button(label, width="stretch"):
                 go(page)
 
 
@@ -125,12 +136,12 @@ def render_term_actions(term_id: int) -> None:
     fav = bool(progress.get("is_favorite"))
     cols = st.columns([1, 1, 1, 1])
     with cols[0]:
-        if st.button("收藏" if not fav else "取消收藏", key=f"fav_{term_id}", use_container_width=True):
+        if st.button("收藏" if not fav else "取消收藏", key=f"fav_{term_id}", width="stretch"):
             upsert_progress(USER_ID, term_id, is_favorite=not fav)
             st.rerun()
     for status, label, col in [("learning", "学习中", cols[1]), ("unfamiliar", "不熟悉", cols[2]), ("mastered", "已掌握", cols[3])]:
         with col:
-            if st.button(label, key=f"{status}_{term_id}", use_container_width=True):
+            if st.button(label, key=f"{status}_{term_id}", width="stretch"):
                 upsert_progress(USER_ID, term_id, status=status)
                 st.rerun()
 
@@ -225,6 +236,10 @@ def render_example_block(example: dict) -> None:
             st.caption(source_text + (f" · {quality}" if quality else ""))
 
 
+def normalize_answer_text(value: str | None) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
 def term_summary_card(term: dict, suffix: str = "") -> None:
     with st.container(border=True):
         cols = st.columns([3, 1, 1])
@@ -234,7 +249,7 @@ def term_summary_card(term: dict, suffix: str = "") -> None:
         with cols[1]:
             st.write(term.get("standard_classification") or "未分类")
         with cols[2]:
-            if st.button("打开卡片", key=f"open_{term['term_id']}_{suffix}", use_container_width=True):
+            if st.button("打开卡片", key=f"open_{term['term_id']}_{suffix}", width="stretch"):
                 go("term", term_id=term["term_id"])
         example = term.get("example_sentence")
         if example:
@@ -264,7 +279,7 @@ def home_page() -> None:
         cols = st.columns([3, 1, 1])
         cols[0].write(f"**{row['display_name_cn']}**")
         cols[1].write(f"{row['ready_count']} ready")
-        if cols[2].button("开始", key=f"theme_{row['theme_id']}", use_container_width=True):
+        if cols[2].button("开始", key=f"theme_{row['theme_id']}", width="stretch"):
             go("theme", theme_id=row["theme_id"])
 
 
@@ -372,39 +387,116 @@ def hydrate_question(question: dict) -> dict:
     return hydrated
 
 
+def question_key(question: dict) -> str:
+    return f"{question.get('term_id')}::{question.get('question_type')}::{question.get('correct_answer')}"
+
+
+def choose_question_type() -> str:
+    counts = st.session_state.setdefault("question_type_counts", {kind: 0 for kind in QUESTION_TYPE_ORDER})
+    total = sum(int(counts.get(kind, 0)) for kind in QUESTION_TYPE_ORDER)
+    if total == 0:
+        return "word_assembly"
+    return min(
+        QUESTION_TYPE_ORDER,
+        key=lambda kind: (int(counts.get(kind, 0)) / QUESTION_TYPE_TARGETS[kind], QUESTION_TYPE_ORDER.index(kind)),
+    )
+
+
+def next_question(theme_id: int | None = None) -> dict | None:
+    preferred_type = choose_question_type()
+    question = create_question(theme_id, preferred_type=preferred_type)
+    if question:
+        counts = st.session_state.setdefault("question_type_counts", {kind: 0 for kind in QUESTION_TYPE_ORDER})
+        counts[question["question_type"]] = int(counts.get(question["question_type"], 0)) + 1
+    return question
+
+
+def selected_word_answer(question: dict) -> str:
+    selected_ids = st.session_state.setdefault("word_answer_ids", [])
+    words = []
+    for option_id in selected_ids:
+        if 0 <= option_id < len(question["options"]):
+            words.append(question["options"][option_id])
+    return " ".join(words)
+
+
+def render_word_assembly(question: dict) -> str:
+    current_key = question_key(question)
+    if st.session_state.get("word_question_key") != current_key:
+        st.session_state.word_question_key = current_key
+        st.session_state.word_answer_ids = list(question.get("_word_answer_ids") or [])
+
+    answer_text = selected_word_answer(question)
+    st.write("**拼接答案**")
+    st.code(answer_text or "请按顺序选择下方单词")
+
+    columns = st.columns(4)
+    selected_ids = st.session_state.setdefault("word_answer_ids", [])
+    disabled = st.session_state.answer_result is not None
+    for index, word in enumerate(question["options"]):
+        with columns[index % 4]:
+            if st.button(word, key=f"word_{current_key}_{index}", disabled=disabled or index in selected_ids, width="stretch"):
+                st.session_state.word_answer_ids.append(index)
+                st.rerun()
+
+    action_cols = st.columns([1, 5])
+    with action_cols[0]:
+        if st.button("清空", disabled=disabled or not selected_ids):
+            st.session_state.word_answer_ids = []
+            st.rerun()
+    return selected_word_answer(question)
+
+
 def learn_page() -> None:
     theme_id = st.session_state.params.get("theme_id")
     st.subheader("测验")
     st.session_state.setdefault("question_history", [])
     st.session_state.setdefault("answer_result", None)
     nav_cols = st.columns([1, 1, 5])
-    if nav_cols[0].button("上一题", disabled=not st.session_state.question_history, use_container_width=True):
+    if nav_cols[0].button("上一题", disabled=not st.session_state.question_history, width="stretch"):
         st.session_state.question = st.session_state.question_history.pop()
         st.session_state.answer_result = st.session_state.question.get("_answer_result")
+        st.session_state.word_answer_ids = list(st.session_state.question.get("_word_answer_ids") or [])
+        st.session_state.word_question_key = question_key(st.session_state.question)
         st.rerun()
-    if nav_cols[1].button("下一题", use_container_width=True):
+    if nav_cols[1].button("下一题", width="stretch"):
         if st.session_state.get("question"):
             current = dict(st.session_state.question)
             current["_answer_result"] = st.session_state.get("answer_result")
+            current["_word_answer_ids"] = list(st.session_state.get("word_answer_ids", []))
             st.session_state.question_history.append(current)
-        st.session_state.question = create_question(theme_id)
+        st.session_state.question = next_question(theme_id)
         st.session_state.answer_result = None
+        st.session_state.word_answer_ids = []
+        st.session_state.word_question_key = question_key(st.session_state.question) if st.session_state.question else None
         st.rerun()
     if "question" not in st.session_state or st.session_state.question is None:
-        st.session_state.question = create_question(theme_id)
+        st.session_state.question = next_question(theme_id)
         st.session_state.answer_result = None
+        st.session_state.word_answer_ids = []
+        st.session_state.word_question_key = question_key(st.session_state.question) if st.session_state.question else None
     question = st.session_state.question
     if not question:
         st.info("ready 内容不足，暂时无法出题。")
         return
     question = hydrate_question(question)
     st.session_state.question = question
-    label = "选择中文含义" if question["question_type"] == "en_to_cn" else "选择英文术语"
+    label_map = {
+        "en_to_cn": "选择中文含义",
+        "cn_to_en": "选择英文术语",
+        "word_assembly": "按中文拼接英文词组",
+    }
+    label = label_map.get(question["question_type"], "测验")
     st.caption(f"{label} · {question['category']}")
     st.header(question["prompt"])
-    selected = st.radio("选项", question["options"], index=None)
-    if st.button("提交答案", disabled=selected is None or st.session_state.answer_result is not None):
-        is_correct = selected == question["correct_answer"]
+    if question["question_type"] == "word_assembly":
+        selected = render_word_assembly(question)
+        disabled = not selected or st.session_state.answer_result is not None
+    else:
+        selected = st.radio("选项", question["options"], index=None)
+        disabled = selected is None or st.session_state.answer_result is not None
+    if st.button("提交答案", disabled=disabled):
+        is_correct = normalize_answer_text(selected) == normalize_answer_text(question["correct_answer"])
         record_attempt(USER_ID, question["term_id"], question["question_type"], selected, question["correct_answer"], is_correct)
         st.session_state.answer_result = {
             "selected": selected,
@@ -472,7 +564,7 @@ def admin_page() -> None:
         uploaded.seek(0)
         missing = sorted(REQUIRED_UPLOAD_COLUMNS - set(preview.columns))
         st.caption(f"检测到 {len(preview.columns)} 个字段")
-        st.dataframe(preview, use_container_width=True)
+        st.dataframe(preview, width="stretch")
         if missing:
             st.error("缺少必要字段：" + "、".join(missing))
         else:
@@ -487,9 +579,9 @@ def admin_page() -> None:
 
     st.divider()
     st.write("状态分布")
-    st.dataframe(get_quality_summary(), use_container_width=True)
+    st.dataframe(get_quality_summary(), width="stretch")
     st.write("来源缺失")
-    st.dataframe(find_missing_sources(), use_container_width=True)
+    st.dataframe(find_missing_sources(), width="stretch")
     with st.form("review_update"):
         term_id = st.number_input("Term ID", min_value=1, step=1)
         status = st.selectbox("新状态", ["ready", "needs_review", "search_only", "rejected"])

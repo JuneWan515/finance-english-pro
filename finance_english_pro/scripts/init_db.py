@@ -10,7 +10,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from db import DB_PATH, SOURCE_CSV, SOURCE_XLSX, get_connection
+from db import DB_PATH, SEED_CSV, SOURCE_CSV, SOURCE_XLSX, get_connection
 
 
 REQUIRED_READY_FIELDS = (
@@ -106,7 +106,17 @@ def reset_content_tables(conn: sqlite3.Connection) -> None:
 
 
 def load_source_rows(source_path: Path | None = None) -> tuple[list[dict[str, str]], Path]:
-    path = source_path or (SOURCE_XLSX if SOURCE_XLSX.exists() else SOURCE_CSV)
+    path = source_path
+    if path is None:
+        for candidate in (SOURCE_XLSX, SEED_CSV, SOURCE_CSV):
+            if candidate.exists():
+                path = candidate
+                break
+    if path is None:
+        raise FileNotFoundError(
+            "No source file found. Expected one of: "
+            f"{SOURCE_XLSX}, {SEED_CSV}, {SOURCE_CSV}"
+        )
     if not path.exists():
         raise FileNotFoundError(f"Source file not found: {path}")
     if path.suffix.lower() in {".xlsx", ".xlsm", ".xls"}:
