@@ -473,29 +473,43 @@ def render_word_assembly(question: dict) -> str:
     return selected_word_answer(question)
 
 
+def go_previous_question() -> None:
+    st.session_state.question = st.session_state.question_history.pop()
+    st.session_state.answer_result = st.session_state.question.get("_answer_result")
+    st.session_state.word_answer_ids = list(st.session_state.question.get("_word_answer_ids") or [])
+    st.session_state.word_question_key = question_key(st.session_state.question)
+    st.rerun()
+
+
+def go_next_question(theme_id: int | None = None) -> None:
+    if st.session_state.get("question"):
+        current = dict(st.session_state.question)
+        current["_answer_result"] = st.session_state.get("answer_result")
+        current["_word_answer_ids"] = list(st.session_state.get("word_answer_ids", []))
+        st.session_state.question_history.append(current)
+    st.session_state.question = next_question(theme_id)
+    st.session_state.answer_result = None
+    st.session_state.word_answer_ids = []
+    st.session_state.word_question_key = question_key(st.session_state.question) if st.session_state.question else None
+    st.rerun()
+
+
+def render_learning_footer(theme_id: int | None = None) -> None:
+    st.divider()
+    nav_cols = st.columns(3)
+    if nav_cols[0].button("上一题", disabled=not st.session_state.question_history, width="stretch"):
+        go_previous_question()
+    if nav_cols[1].button("返回首页", width="stretch"):
+        go("home")
+    if nav_cols[2].button("下一题", width="stretch"):
+        go_next_question(theme_id)
+
+
 def learn_page() -> None:
     theme_id = st.session_state.params.get("theme_id")
     st.subheader("测验")
     st.session_state.setdefault("question_history", [])
     st.session_state.setdefault("answer_result", None)
-    nav_cols = st.columns([1, 1, 5])
-    if nav_cols[0].button("上一题", disabled=not st.session_state.question_history, width="stretch"):
-        st.session_state.question = st.session_state.question_history.pop()
-        st.session_state.answer_result = st.session_state.question.get("_answer_result")
-        st.session_state.word_answer_ids = list(st.session_state.question.get("_word_answer_ids") or [])
-        st.session_state.word_question_key = question_key(st.session_state.question)
-        st.rerun()
-    if nav_cols[1].button("下一题", width="stretch"):
-        if st.session_state.get("question"):
-            current = dict(st.session_state.question)
-            current["_answer_result"] = st.session_state.get("answer_result")
-            current["_word_answer_ids"] = list(st.session_state.get("word_answer_ids", []))
-            st.session_state.question_history.append(current)
-        st.session_state.question = next_question(theme_id)
-        st.session_state.answer_result = None
-        st.session_state.word_answer_ids = []
-        st.session_state.word_question_key = question_key(st.session_state.question) if st.session_state.question else None
-        st.rerun()
     if "question" not in st.session_state or st.session_state.question is None:
         st.session_state.question = next_question(theme_id)
         st.session_state.answer_result = None
@@ -539,6 +553,7 @@ def learn_page() -> None:
             st.error(f"回答错误，正确答案：{result['correct_answer']}")
         st.caption(f"本次选择：{result['selected']}")
         render_answer_detail(question)
+    render_learning_footer(theme_id)
 
 
 def review_page() -> None:
