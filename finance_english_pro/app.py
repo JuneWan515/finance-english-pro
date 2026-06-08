@@ -92,11 +92,7 @@ def clear_learning_state() -> None:
 
 
 def admin_password() -> str:
-    try:
-        configured = st.secrets.get("ADMIN_PASSWORD", "")
-    except Exception:
-        configured = ""
-    return str(configured or os.environ.get("FINANCE_ENGLISH_PRO_ADMIN_PASSWORD", ""))
+    return os.environ.get("ADMIN_PASSWORD", "") or os.environ.get("FINANCE_ENGLISH_PRO_ADMIN_PASSWORD", "")
 
 
 def require_admin() -> bool:
