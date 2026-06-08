@@ -121,7 +121,7 @@ def header() -> None:
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.2rem; }
+        .block-container { padding-top: 3.2rem; }
         div[data-testid="stMetric"] { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
         .term-card { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 10px; }
         .muted { color: #64748b; font-size: 0.92rem; }
