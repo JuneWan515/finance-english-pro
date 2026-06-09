@@ -31,6 +31,7 @@ from services.report_service import get_answered_terms, get_report, get_report_t
 
 
 DEVICE_QUERY_PARAM = "fep_device_id"
+REPORT_KIND_QUERY_PARAM = "report_kind"
 
 
 def get_query_param(name: str) -> str:
@@ -117,6 +118,8 @@ QUESTION_TYPE_ORDER = ("word_assembly", "cn_to_en", "en_to_cn")
 
 
 def go(page: str, **params) -> None:
+    if page != "report_detail" and REPORT_KIND_QUERY_PARAM in st.query_params:
+        del st.query_params[REPORT_KIND_QUERY_PARAM]
     st.session_state.page = page
     st.session_state.params = params
     st.rerun()
@@ -125,6 +128,10 @@ def go(page: str, **params) -> None:
 def init_nav() -> None:
     st.session_state.setdefault("page", "home")
     st.session_state.setdefault("params", {})
+    report_kind = get_query_param(REPORT_KIND_QUERY_PARAM).strip()
+    if report_kind:
+        st.session_state.page = "report_detail"
+        st.session_state.params = {"kind": report_kind}
 
 
 def clear_learning_state() -> None:
@@ -178,6 +185,33 @@ def header() -> None:
             font-size: 0.82rem;
             line-height: 1.2;
         }
+        div[data-testid="stButton"] > button[kind="secondary"] {
+            min-height: 3rem;
+        }
+        .metric-link {
+            display: block;
+            min-height: 110px;
+            padding: 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #0f172a !important;
+            text-decoration: none !important;
+        }
+        .metric-link:hover {
+            border-color: #94a3b8;
+            background: #f8fafc;
+        }
+        .metric-link-label {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 14px;
+        }
+        .metric-link-value {
+            font-size: 2rem;
+            line-height: 1.1;
+            font-weight: 500;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -201,16 +235,9 @@ def header() -> None:
 def render_term_actions(term_id: int) -> None:
     progress = get_progress(USER_ID, term_id)
     fav = bool(progress.get("is_favorite"))
-    cols = st.columns([1, 1, 1, 1])
-    with cols[0]:
-        if st.button("收藏" if not fav else "取消收藏", key=f"fav_{term_id}", width="stretch"):
-            upsert_progress(USER_ID, term_id, is_favorite=not fav)
-            st.rerun()
-    for status, label, col in [("learning", "学习中", cols[1]), ("unfamiliar", "不熟悉", cols[2]), ("mastered", "已掌握", cols[3])]:
-        with col:
-            if st.button(label, key=f"{status}_{term_id}", width="stretch"):
-                upsert_progress(USER_ID, term_id, status=status)
-                st.rerun()
+    if st.button("收藏" if not fav else "取消收藏", key=f"fav_{term_id}", width="stretch"):
+        upsert_progress(USER_ID, term_id, is_favorite=not fav)
+        st.rerun()
 
 
 def clean_source_parts(*values: str | None) -> list[str]:
@@ -471,7 +498,7 @@ def choose_question_type() -> str:
 
 def next_question(theme_id: int | None = None) -> dict | None:
     preferred_type = choose_question_type()
-    question = create_question(theme_id, preferred_type=preferred_type)
+    question = create_question(theme_id, preferred_type=preferred_type, local_user_id=USER_ID)
     if question:
         counts = st.session_state.setdefault("question_type_counts", {kind: 0 for kind in QUESTION_TYPE_ORDER})
         counts[question["question_type"]] = int(counts.get(question["question_type"], 0)) + 1
@@ -613,27 +640,31 @@ def report_page() -> None:
     st.subheader("学习报告")
     report = get_report(USER_ID)
     cols = st.columns(4)
-    cols[0].metric("今日答题", report["today_attempts"])
+    cols[0].markdown(metric_link("今日答题", report["today_attempts"], "today_answered"), unsafe_allow_html=True)
     cols[1].metric("今日正确率", f"{report['today_accuracy']}%")
-    cols[2].metric("累计答题", report["total_attempts"])
+    cols[2].markdown(metric_link("累计答题", report["total_attempts"], "answered"), unsafe_allow_html=True)
     cols[3].metric("累计正确率", f"{report['accuracy']}%")
-    if cols[2].button("查看已答题", width="stretch"):
-        go("report_detail", kind="answered")
 
     cols = st.columns(4)
-    cols[0].metric("跟踪术语", report["tracked_terms"])
-    cols[1].metric("收藏", report["favorites"])
-    cols[2].metric("不熟悉", report["unfamiliar"])
-    cols[3].metric("已掌握", report["mastered"])
-    detail_buttons = [
-        (cols[0], "查看跟踪", "tracked"),
-        (cols[1], "查看收藏", "favorites"),
-        (cols[2], "查看不熟悉", "unfamiliar"),
-        (cols[3], "查看已掌握", "mastered"),
+    metric_buttons = [
+        (cols[0], "跟踪术语", report["tracked_terms"], "tracked"),
+        (cols[1], "收藏", report["favorites"], "favorites"),
+        (cols[2], "不熟悉", report["unfamiliar"], "unfamiliar"),
+        (cols[3], "已掌握", report["mastered"], "mastered"),
     ]
-    for col, label, kind in detail_buttons:
-        if col.button(label, key=f"report_{kind}", width="stretch"):
-            go("report_detail", kind=kind)
+    for col, label, value, kind in metric_buttons:
+        col.markdown(metric_link(label, value, kind), unsafe_allow_html=True)
+
+
+def metric_link(label: str, value: int | float, kind: str) -> str:
+    device_id = get_query_param(DEVICE_QUERY_PARAM).strip()
+    href = f"?{DEVICE_QUERY_PARAM}={device_id}&{REPORT_KIND_QUERY_PARAM}={kind}"
+    return f"""
+    <a class="metric-link" href="{href}">
+        <div class="metric-link-label">{label}</div>
+        <div class="metric-link-value">{value}</div>
+    </a>
+    """
 
 
 def render_attempt_card(attempt: dict) -> None:
@@ -659,17 +690,21 @@ def report_detail_page() -> None:
     kind = st.session_state.params.get("kind", "answered")
     title_map = {
         "answered": "已答题内容",
+        "today_answered": "今日答题内容",
         "tracked": "跟踪术语",
         "favorites": "收藏内容",
         "unfamiliar": "不熟悉内容",
         "mastered": "已掌握内容",
     }
     st.subheader(title_map.get(kind, "报告明细"))
-    if st.button("返回报告"):
+    nav_cols = st.columns(2)
+    if nav_cols[0].button("返回报告", width="stretch"):
         go("report")
+    if nav_cols[1].button("返回首页", width="stretch"):
+        go("home")
 
-    if kind == "answered":
-        attempts = get_answered_terms(USER_ID)
+    if kind in {"answered", "today_answered"}:
+        attempts = get_answered_terms(USER_ID, today_only=kind == "today_answered")
         if not attempts:
             st.info("还没有答题记录。")
             return

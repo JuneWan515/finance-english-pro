@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS user_progress (
     next_review_date TEXT,
     correct_count INTEGER NOT NULL DEFAULT 0,
     wrong_count INTEGER NOT NULL DEFAULT 0,
+    review_stage INTEGER NOT NULL DEFAULT 0,
+    next_attempt_number INTEGER,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(local_user_id, term_id)
 );

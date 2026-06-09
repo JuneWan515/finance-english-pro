@@ -46,10 +46,11 @@ def get_report(local_user_id: int) -> dict:
     }
 
 
-def get_answered_terms(local_user_id: int, limit: int = 100) -> list[dict]:
+def get_answered_terms(local_user_id: int, limit: int = 100, today_only: bool = False) -> list[dict]:
+    date_filter = "AND DATE(a.answered_at) = DATE('now')" if today_only else ""
     conn = get_connection()
     rows = conn.execute(
-        """
+        f"""
         SELECT
             a.attempt_id, a.question_type, a.selected_answer, a.correct_answer,
             a.is_correct, a.answered_at,
@@ -58,6 +59,7 @@ def get_answered_terms(local_user_id: int, limit: int = 100) -> list[dict]:
         JOIN terms t ON t.term_id = a.term_id
         LEFT JOIN examples e ON e.term_id = t.term_id
         WHERE a.local_user_id = ?
+        {date_filter}
         ORDER BY a.answered_at DESC, a.attempt_id DESC
         LIMIT ?
         """,
