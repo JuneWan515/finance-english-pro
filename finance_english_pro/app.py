@@ -27,7 +27,7 @@ from services.content_service import (
 )
 from services.learning_service import create_question
 from services.progress_service import get_due_reviews, get_local_user_id, get_progress, record_attempt, upsert_progress
-from services.report_service import get_report
+from services.report_service import get_answered_terms, get_report, get_report_terms
 
 
 DEVICE_QUERY_PARAM = "fep_device_id"
@@ -593,6 +593,7 @@ def learn_page() -> None:
         else:
             st.error(f"回答错误，正确答案：{result['correct_answer']}")
         st.caption(f"本次选择：{result['selected']}")
+        render_term_actions(int(question["term_id"]))
         render_answer_detail(question)
     render_learning_footer(theme_id)
 
@@ -616,11 +617,75 @@ def report_page() -> None:
     cols[1].metric("今日正确率", f"{report['today_accuracy']}%")
     cols[2].metric("累计答题", report["total_attempts"])
     cols[3].metric("累计正确率", f"{report['accuracy']}%")
+    if cols[2].button("查看已答题", width="stretch"):
+        go("report_detail", kind="answered")
+
     cols = st.columns(4)
     cols[0].metric("跟踪术语", report["tracked_terms"])
     cols[1].metric("收藏", report["favorites"])
     cols[2].metric("不熟悉", report["unfamiliar"])
     cols[3].metric("已掌握", report["mastered"])
+    detail_buttons = [
+        (cols[0], "查看跟踪", "tracked"),
+        (cols[1], "查看收藏", "favorites"),
+        (cols[2], "查看不熟悉", "unfamiliar"),
+        (cols[3], "查看已掌握", "mastered"),
+    ]
+    for col, label, kind in detail_buttons:
+        if col.button(label, key=f"report_{kind}", width="stretch"):
+            go("report_detail", kind=kind)
+
+
+def render_attempt_card(attempt: dict) -> None:
+    with st.container(border=True):
+        cols = st.columns([3, 1])
+        with cols[0]:
+            st.subheader(attempt["term_or_phrase"])
+            st.caption(term_caption(attempt))
+        with cols[1]:
+            if st.button("打开卡片", key=f"attempt_open_{attempt['attempt_id']}", width="stretch"):
+                go("term", term_id=attempt["term_id"])
+        st.write("**题型**")
+        st.write(attempt.get("question_type") or "暂无")
+        result = "正确" if attempt.get("is_correct") else "错误"
+        st.write(f"**结果**：{result}")
+        st.write(f"**本次选择**：{attempt.get('selected_answer') or '暂无'}")
+        st.write(f"**正确答案**：{attempt.get('correct_answer') or '暂无'}")
+        if attempt.get("answered_at"):
+            st.caption(f"答题时间：{attempt['answered_at']}")
+
+
+def report_detail_page() -> None:
+    kind = st.session_state.params.get("kind", "answered")
+    title_map = {
+        "answered": "已答题内容",
+        "tracked": "跟踪术语",
+        "favorites": "收藏内容",
+        "unfamiliar": "不熟悉内容",
+        "mastered": "已掌握内容",
+    }
+    st.subheader(title_map.get(kind, "报告明细"))
+    if st.button("返回报告"):
+        go("report")
+
+    if kind == "answered":
+        attempts = get_answered_terms(USER_ID)
+        if not attempts:
+            st.info("还没有答题记录。")
+            return
+        for attempt in attempts:
+            render_attempt_card(attempt)
+        return
+
+    if kind not in {"tracked", "favorites", "unfamiliar", "mastered"}:
+        st.info("未找到该报告明细。")
+        return
+    terms = get_report_terms(USER_ID, kind)
+    if not terms:
+        st.info("暂无内容。")
+        return
+    for term in terms:
+        term_summary_card(term, suffix=f"report_{kind}")
 
 
 def admin_page() -> None:
@@ -694,6 +759,8 @@ elif page == "review":
     review_page()
 elif page == "report":
     report_page()
+elif page == "report_detail":
+    report_detail_page()
 elif page == "admin":
     admin_page()
 
