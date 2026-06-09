@@ -4,6 +4,7 @@ import hmac
 import os
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -46,19 +47,29 @@ def ensure_device_id() -> str:
     if device_id:
         return device_id
 
+    st.session_state.setdefault("fallback_device_id", str(uuid4()))
+    fallback_device_id = st.session_state.fallback_device_id
+
     components.html(
         f"""
         <script>
         const storageKey = "finance_english_pro_device_id";
         const params = new URLSearchParams(window.parent.location.search);
-        let deviceId = window.parent.localStorage.getItem(storageKey);
-        if (!deviceId) {{
-            if (window.parent.crypto && window.parent.crypto.randomUUID) {{
-                deviceId = window.parent.crypto.randomUUID();
+        let deviceId = "{fallback_device_id}";
+        try {{
+            const storedDeviceId = window.parent.localStorage.getItem(storageKey);
+            if (storedDeviceId) {{
+                deviceId = storedDeviceId;
             }} else {{
-                deviceId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+                if (window.parent.crypto && window.parent.crypto.randomUUID) {{
+                    deviceId = window.parent.crypto.randomUUID();
+                }} else {{
+                    deviceId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+                }}
+                window.parent.localStorage.setItem(storageKey, deviceId);
             }}
-            window.parent.localStorage.setItem(storageKey, deviceId);
+        }} catch (error) {{
+            console.warn("Local progress storage is unavailable; using fallback device id.", error);
         }}
         params.set("{DEVICE_QUERY_PARAM}", deviceId);
         const newUrl = window.parent.location.pathname + "?" + params.toString() + window.parent.location.hash;
@@ -67,7 +78,10 @@ def ensure_device_id() -> str:
         """,
         height=0,
     )
-    st.info("正在初始化本机学习记录，请稍候刷新。")
+    st.info("正在初始化本机学习记录，请稍候刷新。如果一直停留在这里，请点击下方按钮继续。")
+    if st.button("继续进入"):
+        st.query_params[DEVICE_QUERY_PARAM] = fallback_device_id
+        st.rerun()
     st.stop()
 
 
