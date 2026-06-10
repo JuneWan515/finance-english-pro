@@ -22,6 +22,8 @@ REQUIRED_READY_FIELDS = (
     "knowledge_source",
 )
 
+CSV_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "gbk", "big5")
+
 
 def normalize(value: str | None) -> str:
     if value is None:
@@ -105,6 +107,23 @@ def reset_content_tables(conn: sqlite3.Connection) -> None:
         conn.execute(f"DELETE FROM {table}")
 
 
+def read_csv_rows(path: Path) -> tuple[list[dict[str, str]], str]:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in CSV_ENCODINGS:
+        try:
+            with path.open(newline="", encoding=encoding) as fh:
+                return list(csv.DictReader(fh)), encoding
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    raise UnicodeDecodeError(
+        last_error.encoding if last_error else "unknown",
+        last_error.object if last_error else b"",
+        last_error.start if last_error else 0,
+        last_error.end if last_error else 1,
+        "CSV encoding is not supported. Please save the file as UTF-8 or GB18030.",
+    )
+
+
 def load_source_rows(source_path: Path | None = None) -> tuple[list[dict[str, str]], Path]:
     path = source_path
     if path is None:
@@ -122,8 +141,8 @@ def load_source_rows(source_path: Path | None = None) -> tuple[list[dict[str, st
     if path.suffix.lower() in {".xlsx", ".xlsm", ".xls"}:
         df = pd.read_excel(path, sheet_name="Extract")
         return df.to_dict(orient="records"), path
-    with path.open(newline="", encoding="utf-8-sig") as fh:
-        return list(csv.DictReader(fh)), path
+    rows, _encoding = read_csv_rows(path)
+    return rows, path
 
 
 def import_terms(source_path: Path | None = None, reset: bool = True) -> dict[str, int]:

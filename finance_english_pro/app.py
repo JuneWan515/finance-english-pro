@@ -14,7 +14,7 @@ APP_DIR = Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from scripts.init_db import upsert_terms
+from scripts.init_db import read_csv_rows, upsert_terms
 from services.admin_service import find_missing_sources, get_quality_summary, update_review_status
 from services.content_service import (
     ensure_database,
@@ -759,22 +759,27 @@ def admin_page() -> None:
     st.info("上传后会按术语合并更新内容；未删除术语会保留学习记录、答题记录和收藏状态，只有被删除术语的对应状态会清理。")
     uploaded = st.file_uploader("选择 CSV 文件更新系统数据库", type=["csv"])
     if uploaded is not None:
-        preview = pd.read_csv(uploaded, nrows=5)
-        uploaded.seek(0)
-        missing = sorted(REQUIRED_UPLOAD_COLUMNS - set(preview.columns))
-        st.caption(f"检测到 {len(preview.columns)} 个字段")
-        st.dataframe(preview, width="stretch")
-        if missing:
-            st.error("缺少必要字段：" + "、".join(missing))
-        else:
-            if st.button("用该 CSV 重建数据库", type="primary"):
-                UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        preview_path = UPLOAD_DIR / "preview_source.csv"
+        preview_path.write_bytes(uploaded.getvalue())
+        try:
+            rows, detected_encoding = read_csv_rows(preview_path)
+            preview = pd.DataFrame(rows[:5])
+            missing = sorted(REQUIRED_UPLOAD_COLUMNS - set(preview.columns))
+            st.caption(f"检测到 {len(preview.columns)} 个字段，文件编码：{detected_encoding}")
+            st.dataframe(preview, width="stretch")
+            if missing:
+                st.error("缺少必要字段：" + "、".join(missing))
+            elif st.button("用该 CSV 重建数据库", type="primary"):
                 upload_path = UPLOAD_DIR / "uploaded_source.csv"
                 upload_path.write_bytes(uploaded.getvalue())
                 result = upsert_terms(upload_path)
                 clear_learning_state()
                 st.session_state.import_result = result
                 st.rerun()
+        except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+            st.error("CSV 文件无法解析。请从 Excel 另存为 UTF-8 CSV，或确认文件没有损坏。")
+            st.caption(str(exc))
 
     st.divider()
     st.write("状态分布")
